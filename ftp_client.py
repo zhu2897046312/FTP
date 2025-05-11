@@ -15,6 +15,8 @@ class FTPClient:
         self.aes_key = None
         self.cipher_aes = None
         self.nonce = None
+        self.encrypt_cipher = None
+        self.decrypt_cipher = None
         
     def connect(self):
         self.client_socket.connect((self.host, self.port))
@@ -28,10 +30,11 @@ class FTPClient:
         enc_aes_key = cipher_rsa.encrypt(self.aes_key)
         self.client_socket.sendall(enc_aes_key)
         
-        # 接收AES nonce
+        # 接收AES nonce并初始化两个cipher实例
         self.nonce = self.client_socket.recv(16)
-        self.cipher_aes = AES.new(self.aes_key, AES.MODE_EAX, nonce=self.nonce)
-        
+        self.encrypt_cipher = AES.new(self.aes_key, AES.MODE_EAX, nonce=self.nonce)
+        self.decrypt_cipher = AES.new(self.aes_key, AES.MODE_EAX, nonce=self.nonce)
+
         # 用户认证
         if not self.authenticate():
             print("Authentication failed")
@@ -40,10 +43,10 @@ class FTPClient:
 
     # 加密/解密方法
     def encrypt_data(self, data):
-        return self.cipher_aes.encrypt(data)
+        return self.encrypt_cipher.encrypt(data)
 
     def decrypt_data(self, data):
-        return self.cipher_aes.decrypt(data)
+        return self.decrypt_cipher.decrypt(data)
 
     # 用户认证
     def authenticate(self):

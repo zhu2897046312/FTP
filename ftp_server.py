@@ -106,21 +106,25 @@ class FTPServer:
             cipher_rsa = PKCS1_OAEP.new(self.rsa_key)
             aes_key = cipher_rsa.decrypt(enc_aes_key)
             
-            # 建立AES加密通道
-            cipher_aes = AES.new(aes_key, AES.MODE_EAX)
-            client_socket.sendall(cipher_aes.nonce)
-            
-            # 用户认证
-            if not self.authenticate(client_socket, cipher_aes):
-                return
-                
-            # 处理命令
+            # 生成nonce并初始化加密和解密的cipher
+            nonce = get_random_bytes(16)
+            client_socket.sendall(nonce)
+            encrypt_cipher = AES.new(aes_key, AES.MODE_EAX, nonce=nonce)
+            decrypt_cipher = AES.new(aes_key, AES.MODE_EAX, nonce=nonce)
+
+            # 用户认证使用decrypt_cipher解密
+            enc_creds = client_socket.recv(1024)
+            creds = self.decrypt_data(enc_creds, decrypt_cipher).decode().split(':')
+
+            # 发送响应使用encrypt_cipher加密
+            self.send_response(client_socket, "AUTH_SUCCESS", encrypt_cipher)
+
+            # 处理命令循环
             while True:
                 enc_data = client_socket.recv(1024)
-                if not enc_data:
-                    break
-                data = self.decrypt_data(enc_data, cipher_aes).decode()
-                self.process_command(data, client_socket, cipher_aes)
+                data = self.decrypt_data(enc_data, decrypt_cipher).decode()
+                # 处理命令并发送响应使用encrypt_cipher
+                self.process_command(data, client_socket, encrypt_cipher)
                 
         finally:
             client_socket.close()
@@ -203,7 +207,7 @@ class FTPServer:
             self.send_response(client_socket, f"ERROR: {str(e)}", cipher)
 
     def send_response(self, client_socket, response, cipher):
-        enc_response = self.encrypt_data(response.encode(), cipher)
+        enc_response = cipher.encrypt(response.encode())
         client_socket.sendall(enc_response)
 
 if __name__ == "__main__":

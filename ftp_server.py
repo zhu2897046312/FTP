@@ -117,7 +117,12 @@ class FTPServer:
             creds = self.decrypt_data(enc_creds, decrypt_cipher).decode().split(':')
 
             # 发送响应使用encrypt_cipher加密
-            self.send_response(client_socket, "AUTH_SUCCESS", encrypt_cipher)
+            print(f"正在进行用户认证")
+            if not self.authenticate(client_socket, encrypt_cipher,creds):  # 调用认证方法
+                print("Authentication failed for client. Closing connection.")
+                client_socket.close()
+                return
+            print(f"认证完成")
 
             # 处理命令循环
             while True:
@@ -137,9 +142,7 @@ class FTPServer:
         return cipher.decrypt(data)
 
     # 用户认证
-    def authenticate(self, client_socket, cipher):
-        enc_creds = client_socket.recv(1024)
-        creds = self.decrypt_data(enc_creds, cipher).decode().split(':')
+    def authenticate(self, client_socket, cipher,creds):
         username, password = creds[0], creds[1]
         
         try:

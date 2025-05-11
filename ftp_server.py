@@ -3,6 +3,7 @@ import sys
 import sqlite3
 import socket
 import threading
+import time
 import mysql.connector
 from mysql.connector import Error
 from Crypto.PublicKey import RSA
@@ -181,7 +182,74 @@ class FTPServer:
                 response = "\n".join(files)
             elif cmd == "PWD":
                 response = self.current_dir
-            if cmd == "ADD":
+            elif cmd == "CD":
+                if not args:
+                    response = "错误: 请指定目录路径"
+                else:
+                    target_dir = args[0]
+                    if target_dir == "..":
+                        new_dir = os.path.dirname(self.current_dir)
+                    else:
+                        new_dir = os.path.join(self.current_dir, target_dir)
+                    
+                    if os.path.exists(new_dir) and os.path.isdir(new_dir):
+                        self.current_dir = os.path.abspath(new_dir)
+                        response = f"当前目录已更改为: {self.current_dir}"
+                    else:
+                        response = "错误: 目录不存在"
+            elif cmd == "MKDIR":
+                if not args:
+                    response = "错误: 请指定目录名"
+                else:
+                    new_dir = os.path.join(self.current_dir, args[0])
+                    try:
+                        os.makedirs(new_dir)
+                        response = f"目录创建成功: {args[0]}"
+                    except FileExistsError:
+                        response = "错误: 目录已存在"
+                    except Exception as e:
+                        response = f"创建目录失败: {str(e)}"
+            elif cmd == "RENAME":
+                if len(args) != 2:
+                    response = "错误: 请指定源文件/目录名和目标名"
+                else:
+                    old_path = os.path.join(self.current_dir, args[0])
+                    new_path = os.path.join(self.current_dir, args[1])
+                    if os.path.exists(old_path):
+                        try:
+                            os.rename(old_path, new_path)
+                            response = f"重命名成功: {args[0]} -> {args[1]}"
+                        except Exception as e:
+                            response = f"重命名失败: {str(e)}"
+                    else:
+                        response = "错误: 源文件/目录不存在"
+            elif cmd == "ATTRIB":
+                if not args:
+                    response = "错误: 请指定文件/目录名"
+                else:
+                    path = os.path.join(self.current_dir, args[0])
+                    if os.path.exists(path):
+                        try:
+                            stat = os.stat(path)
+                            is_dir = os.path.isdir(path)
+                            mode = stat.st_mode
+                            size = stat.st_size if not is_dir else '-'
+                            mtime = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(stat.st_mtime))
+                            
+                            attr_info = [
+                                f"{'目录' if is_dir else '文件'}: {args[0]}",
+                                f"大小: {size} 字节",
+                                f"修改时间: {mtime}",
+                                f"权限: {oct(mode)[-3:]}",
+                                f"只读: {'是' if not os.access(path, os.W_OK) else '否'}"
+                            ]
+                            response = "\n".join(attr_info)
+                        except Exception as e:
+                            response = f"获取属性失败: {str(e)}"
+                    else:
+                        response = "错误: 文件/目录不存在"
+
+            elif cmd == "ADD":
                 if len(args) != 2:
                     raise ValueError("Usage: add <username> <password>")
                 
@@ -204,6 +272,8 @@ class FTPServer:
                     if conn.is_connected():
                         cursor.close()
                         conn.close()
+            else:
+                response = f"错误: 未知命令 '{cmd}'\n可用命令: LIST, PWD, CD, MKDIR, RENAME, ATTRIB, ADD"
             
             self.send_response(client_socket, response, cipher)
         except Exception as e:

@@ -209,6 +209,18 @@ class FTPServer:
                         response = "错误: 目录已存在"
                     except Exception as e:
                         response = f"创建目录失败: {str(e)}"
+            elif cmd == "CREATE":
+                if not args:
+                    response = "错误: 请指定文件名"
+                else:
+                    file_path = os.path.join(self.current_dir, args[0])
+                    try:
+                        with open(file_path, 'w') as f:
+                            if len(args) > 1:
+                                f.write(' '.join(args[1:]))
+                        response = f"文件创建成功: {args[0]}"
+                    except Exception as e:
+                        response = f"创建文件失败: {str(e)}"
             elif cmd == "RENAME":
                 if len(args) != 2:
                     response = "错误: 请指定源文件/目录名和目标名"

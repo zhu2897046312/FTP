@@ -27,7 +27,7 @@ DB_CONFIG = {
 }
 
 class FTPServer:
-    def __init__(self, host='0.0.0.0', port=2121):
+    def __init__(self, host='0.0.0.0', port=8081):
         self.host = host
         self.port = port
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -177,7 +177,51 @@ class FTPServer:
         
         response = ""
         try:
-            if cmd == "LIST":
+            if cmd == "GET":
+                if len(args) != 1:
+                    response = "错误: 请指定文件名"
+                    self.send_response(client_socket, response, cipher)
+                else:
+                    filename = args[0]
+                    filepath = os.path.join(self.current_dir, filename)
+                    if os.path.isfile(filepath):
+                        try:
+                            with open(filepath, 'rb') as f:
+                                file_data = f.read()
+                            # 先发送文件大小（4字节头）
+                            file_size = len(file_data).to_bytes(4, byteorder='big')
+                            client_socket.sendall(cipher.encrypt(file_size))
+                            # 再分块发送文件数据
+                            chunk_size = 1024
+                            for i in range(0, len(file_data), chunk_size):
+                                chunk = file_data[i:i+chunk_size]
+                                client_socket.sendall(cipher.encrypt(chunk))
+                        except Exception as e:
+                            response = f"错误: {str(e)}"
+                            self.send_response(client_socket, response, cipher)
+                    else:
+                        response = "错误: 文件不存在"
+                        self.send_response(client_socket, response, cipher)
+            elif cmd == "PUT":
+                if len(args) != 1:
+                    response = "错误: 请指定远程文件名"
+                    self.send_response(client_socket, response, cipher)
+                else:
+                    remote_filename = args[0]
+                    # 发送READY信号
+                    self.send_response(client_socket, "READY", cipher)
+                    # 接收文件数据
+                    enc_data = client_socket.recv(1024 * 1024)  # 假设文件较小
+                    file_data = self.decrypt_data(enc_data, cipher)
+                    filepath = os.path.join(self.current_dir, remote_filename)
+                    try:
+                        with open(filepath, 'wb') as f:
+                            f.write(file_data)
+                        response = f"文件 {remote_filename} 上传成功"
+                    except Exception as e:
+                        response = f"错误: {str(e)}"
+                    self.send_response(client_socket, response, cipher)
+            elif cmd == "LIST":
                 files = os.listdir(self.current_dir)
                 response = "\n".join(files)
             elif cmd == "PWD":
@@ -260,65 +304,6 @@ class FTPServer:
                             response = f"获取属性失败: {str(e)}"
                     else:
                         response = "错误: 文件/目录不存在"
-            elif cmd == "GET":
-                if not args:
-                    response = "错误: 请指定要下载的文件名"
-                else:
-                    file_path = os.path.join(self.current_dir, args[0])
-                    if os.path.exists(file_path) and os.path.isfile(file_path):
-                        try:
-                            with open(file_path, 'rb') as f:
-                                file_data = f.read()
-                            # 发送文件大小
-                            size_msg = str(len(file_data)).encode()
-                            enc_size = cipher.encrypt(size_msg)
-                            client_socket.sendall(enc_size)
-                            
-                            # 等待客户端确认
-                            enc_confirm = client_socket.recv(1024)
-                            confirm = self.decrypt_data(enc_confirm, cipher).decode()
-                            
-                            if confirm == "READY":
-                                # 分块发送文件内容
-                                chunk_size = 8192
-                                for i in range(0, len(file_data), chunk_size):
-                                    chunk = file_data[i:i + chunk_size]
-                                    enc_chunk = cipher.encrypt(chunk)
-                                    client_socket.sendall(enc_chunk)
-                                return
-                        except Exception as e:
-                            response = f"文件传输失败: {str(e)}"
-                    else:
-                        response = "错误: 文件不存在"
-
-            elif cmd == "PUT":
-                if not args:
-                    response = "错误: 请指定要上传的文件名"
-                else:
-                    file_path = os.path.join(self.current_dir, args[0])
-                    try:
-                        # 接收文件大小
-                        enc_size = client_socket.recv(1024)
-                        size = int(self.decrypt_data(enc_size, cipher).decode())
-                        
-                        # 发送准备就绪确认
-                        ready_msg = "READY".encode()
-                        enc_ready = cipher.encrypt(ready_msg)
-                        client_socket.sendall(enc_ready)
-                        
-                        # 分块接收文件数据
-                        with open(file_path, 'wb') as f:
-                            received_size = 0
-                            while received_size < size:
-                                chunk_size = min(8192, size - received_size)
-                                enc_chunk = client_socket.recv(chunk_size)
-                                chunk = self.decrypt_data(enc_chunk, cipher)
-                                f.write(chunk)
-                                received_size += len(chunk)
-                        
-                        response = f"文件上传成功: {args[0]}"
-                    except Exception as e:
-                        response = f"文件上传失败: {str(e)}"
             elif cmd == "ADD":
                 if len(args) != 2:
                     raise ValueError("Usage: add <username> <password>")

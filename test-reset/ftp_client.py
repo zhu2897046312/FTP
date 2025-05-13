@@ -8,7 +8,7 @@ import getpass
 import bcrypt
 
 class FTPClient:
-    def __init__(self, host='127.0.0.1', port=2121):
+    def __init__(self, host='127.0.0.1', port=8081):
         self.host = host
         self.port = port
         self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -79,79 +79,90 @@ class FTPClient:
         response = self.decrypt_data(enc_response).decode()
         print(response)
 
-    def download_file(self, filename):
+    def download_file(self, remote_filename, local_filename):
         # 发送GET命令
-        command = f"GET {filename}"
-        enc_cmd = self.encrypt_data(command.encode())
+        enc_cmd = self.encrypt_data(f"GET {remote_filename}".encode())
         self.client_socket.sendall(enc_cmd)
         
-        # 接收文件大小
-        enc_size = self.client_socket.recv(1024)
-        size = int(self.decrypt_data(enc_size).decode())
-        
-        # 发送准备就绪确认
-        ready_msg = "READY".encode()
-        enc_ready = self.encrypt_data(ready_msg)
-        self.client_socket.sendall(enc_ready)
-        
-        # 接收并保存文件
-        try:
-            with open(filename, 'wb') as f:
-                received_size = 0
-                while received_size < size:
-                    chunk_size = min(8192, size - received_size)
-                    enc_chunk = self.client_socket.recv(chunk_size)
-                    chunk = self.decrypt_data(enc_chunk)
-                    f.write(chunk)
-                    received_size += len(chunk)
-            print(f"文件 {filename} 下载成功")
-        except Exception as e:
-            print(f"下载失败: {str(e)}")
-
-    def upload_file(self, filename):
-        if not os.path.exists(filename):
-            print("错误: 文件不存在")
+        # 先接收文件大小
+        enc_size = self.client_socket.recv(4)
+        if not enc_size:
+            print("错误: 未收到文件头")
             return
-            
-        try:
-            # 发送PUT命令
-            command = f"PUT {filename}"
-            enc_cmd = self.encrypt_data(command.encode())
-            self.client_socket.sendall(enc_cmd)
-            
-            # 读取文件并发送大小
-            with open(filename, 'rb') as f:
-                file_data = f.read()
-            size_msg = str(len(file_data)).encode()
-            enc_size = self.encrypt_data(size_msg)
-            self.client_socket.sendall(enc_size)
-            
-            # 等待服务器确认
-            enc_confirm = self.client_socket.recv(1024)
-            confirm = self.decrypt_data(enc_confirm).decode()
-            
-            if confirm == "READY":
-                # 分块发送文件
-                chunk_size = 8192
-                for i in range(0, len(file_data), chunk_size):
-                    chunk = file_data[i:i + chunk_size]
-                    enc_chunk = self.encrypt_data(chunk)
-                    self.client_socket.sendall(enc_chunk)
-                
-                # 接收上传完成响应
-                enc_response = self.client_socket.recv(1024)
-                response = self.decrypt_data(enc_response).decode()
-                print(response)
-        except Exception as e:
-            print(f"上传失败: {str(e)}")
-            
+        file_size = int.from_bytes(self.decrypt_data(enc_size), byteorder='big')
+        
+        # 接收文件数据
+        received = 0
+        with open(local_filename, 'wb') as f:
+            while received < file_size:
+                enc_chunk = self.client_socket.recv(1024)
+                if not enc_chunk:
+                    break
+                chunk = self.decrypt_data(enc_chunk)
+                f.write(chunk)
+                received += len(chunk)
+        
+        if received == file_size:
+            print(f"文件 {remote_filename} 下载成功")
+        else:
+            print(f"错误: 文件下载不完整")
+
+    def upload_file(self, local_filename, remote_filename):
+        # 检查本地文件是否存在
+        if not os.path.isfile(local_filename):
+            print(f"错误: 文件 {local_filename} 不存在")
+            return
+        
+        # 发送PUT命令
+        enc_cmd = self.encrypt_data(f"PUT {remote_filename}".encode())
+        self.client_socket.sendall(enc_cmd)
+        
+        # 等待服务器响应
+        enc_response = self.client_socket.recv(1024)
+        response = self.decrypt_data(enc_response).decode()
+        if response != "READY":
+            print(f"错误: {response}")
+            return
+        
+        # 读取并发送文件数据
+        with open(local_filename, 'rb') as f:
+            file_data = f.read()
+        enc_file_data = self.encrypt_data(file_data)
+        self.client_socket.sendall(enc_file_data)
+        
+        # 接收最终响应
+        enc_final_response = self.client_socket.recv(1024)
+        final_response = self.decrypt_data(enc_final_response).decode()
+        print(final_response)
+
     def start_cli(self):
         while True:
             try:
                 cmd = input("ftp> ")
                 if cmd.lower() == 'exit':
                     break
-                self.send_command(cmd)
+                elif cmd.startswith("get "):
+                    parts = cmd.split()
+                    if len(parts) != 2:
+                        print("用法: get <远程文件名>")
+                        continue
+                    remote_file = parts[1]
+                    local_file = os.path.basename(remote_file)
+                    self.download_file(remote_file, local_file)
+                elif cmd.startswith("put "):
+                    parts = cmd.split()
+                    if len(parts) != 3:
+                        print("用法: put <本地文件名> <远程文件名>")
+                        continue
+                    local_file = parts[1]
+                    remote_file = parts[2]
+                    self.upload_file(local_file, remote_file)
+                else:
+                    enc_cmd = self.encrypt_data(cmd.encode())
+                    self.client_socket.sendall(enc_cmd)
+                    enc_response = self.client_socket.recv(1024)
+                    response = self.decrypt_data(enc_response).decode()
+                    print(response)
             except KeyboardInterrupt:
                 break
 

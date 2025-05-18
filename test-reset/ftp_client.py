@@ -109,7 +109,7 @@ class FTPClient:
 
     def upload_file(self, local_filename, remote_filename):
         # 检查本地文件是否存在
-        if not os.path.isfile('E:\\WorkSpace\\FTP\\test-reset\\example.txt'):
+        if not os.path.isfile(local_filename):
             print(f"错误: 文件 {local_filename} 不存在")
             return
         
@@ -126,7 +126,7 @@ class FTPClient:
             return
         
         # 读取并发送文件数据
-        with open('E:\\WorkSpace\\FTP\\test-reset\\example.txt', 'rb') as f:
+        with open(local_filename, 'rb') as f:
             file_data = f.read()
         file_size = len(file_data)
         enc_file_size = self.encrypt_data(file_size.to_bytes(4, byteorder='big'))

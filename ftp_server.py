@@ -33,6 +33,7 @@ class FTPServer:
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.current_dir = os.getcwd()
+        in_file_transfer = False
          # 初始化数据库
         self.init_db()
         # 生成RSA密钥对
@@ -129,8 +130,13 @@ class FTPServer:
             while True:
                 enc_data = client_socket.recv(1024)
                 data = self.decrypt_data(enc_data, decrypt_cipher).decode()
-                # 处理命令并发送响应使用encrypt_cipher
-                self.process_command(data, client_socket, encrypt_cipher)
+                
+                # 检查是否为文件传输命令
+                if data.upper().startswith("PUT "):
+                    self._handle_file_upload(data, client_socket, encrypt_cipher, decrypt_cipher)
+                else:
+                    # 普通命令处理
+                    self.process_command(data, client_socket, encrypt_cipher)
                 
         finally:
             client_socket.close()
@@ -141,7 +147,42 @@ class FTPServer:
 
     def decrypt_data(self, data, cipher):
         return cipher.decrypt(data)
+    def _handle_file_upload(self, command, client_socket, encrypt_cipher, decrypt_cipher):
+        """专用文件上传处理逻辑"""
+        try:
+            args = command.split()
+            if len(args) != 2:
+                raise ValueError("Usage: PUT <remote_filename>")
+            
+            remote_filename = args[1]
+            self.send_response(client_socket, "READY", encrypt_cipher)
 
+            # 1. 接收文件大小头（4字节）
+            enc_size = client_socket.recv(4)
+            file_size = int.from_bytes(decrypt_cipher.decrypt(enc_size), byteorder='big')
+
+            # 2. 分块接收文件数据
+            filepath = os.path.join(self.current_dir, remote_filename)
+            received = 0
+            with open(filepath, 'wb') as f:
+                while received < file_size:
+                    enc_chunk = client_socket.recv(1024)
+                    if not enc_chunk:
+                        break
+                    chunk = decrypt_cipher.decrypt(enc_chunk)
+                    f.write(chunk)
+                    received += len(chunk)
+
+            # 3. 验证完整性并响应
+            if received == file_size:
+                response = f"文件 {remote_filename} 上传成功 ({file_size} 字节)"
+            else:
+                response = f"警告: 上传不完整 ({received}/{file_size} 字节)"
+            
+            self.send_response(client_socket, response, encrypt_cipher)
+
+        except Exception as e:
+            self.send_response(client_socket, f"上传失败: {str(e)}", encrypt_cipher)
     # 用户认证
     def authenticate(self, client_socket, cipher,creds):
         username, password = creds[0], creds[1]
@@ -208,16 +249,32 @@ class FTPServer:
                     self.send_response(client_socket, response, cipher)
                 else:
                     remote_filename = args[0]
-                    # 发送READY信号
                     self.send_response(client_socket, "READY", cipher)
-                    # 接收文件数据
-                    enc_data = client_socket.recv(1024 * 1024)  # 假设文件较小
-                    file_data = self.decrypt_data(enc_data, cipher)
-                    filepath = os.path.join(self.current_dir, remote_filename)
+
                     try:
+                        # 接收并解密文件大小（4字节）
+                        enc_size = client_socket.recv(4)
+                        if not enc_size:
+                            self.send_response(client_socket, "错误: 未收到文件大小", cipher)
+                            return
+                        file_size = int.from_bytes(cipher.decrypt(enc_size), byteorder='big')
+
+                        # 分块接收数据
+                        filepath = os.path.join(self.current_dir, remote_filename)
+                        received = 0
                         with open(filepath, 'wb') as f:
-                            f.write(file_data)
-                        response = f"文件 {remote_filename} 上传成功"
+                            while received < file_size:
+                                enc_chunk = client_socket.recv(1024)
+                                if not enc_chunk:
+                                    break
+                                chunk = cipher.decrypt(enc_chunk)
+                                f.write(chunk)
+                                received += len(chunk)
+
+                        if received == file_size:
+                            response = f"文件 {remote_filename} 上传成功"
+                        else:
+                            response = f"错误: 上传不完整，已接收 {received} / {file_size} 字节"
                     except Exception as e:
                         response = f"错误: {str(e)}"
                     self.send_response(client_socket, response, cipher)

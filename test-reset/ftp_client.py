@@ -109,7 +109,7 @@ class FTPClient:
 
     def upload_file(self, local_filename, remote_filename):
         # 检查本地文件是否存在
-        if not os.path.isfile(local_filename):
+        if not os.path.isfile('E:\\WorkSpace\\FTP\\test-reset\\example.txt'):
             print(f"错误: 文件 {local_filename} 不存在")
             return
         
@@ -120,15 +120,24 @@ class FTPClient:
         # 等待服务器响应
         enc_response = self.client_socket.recv(1024)
         response = self.decrypt_data(enc_response).decode()
+        print(f"{response}")
         if response != "READY":
             print(f"错误: {response}")
             return
         
         # 读取并发送文件数据
-        with open(local_filename, 'rb') as f:
+        with open('E:\\WorkSpace\\FTP\\test-reset\\example.txt', 'rb') as f:
             file_data = f.read()
-        enc_file_data = self.encrypt_data(file_data)
-        self.client_socket.sendall(enc_file_data)
+        file_size = len(file_data)
+        enc_file_size = self.encrypt_data(file_size.to_bytes(4, byteorder='big'))
+        self.client_socket.sendall(enc_file_size)
+
+        # 分块发送数据
+        chunk_size = 1024
+        for i in range(0, len(file_data), chunk_size):
+            chunk = file_data[i:i + chunk_size]
+            enc_chunk = self.encrypt_data(chunk)
+            self.client_socket.sendall(enc_chunk)
         
         # 接收最终响应
         enc_final_response = self.client_socket.recv(1024)
